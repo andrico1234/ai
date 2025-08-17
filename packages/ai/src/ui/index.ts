@@ -32,6 +32,7 @@ export {
   getToolName,
   isToolUIPart,
   type DataUIPart,
+  type DynamicToolUIPart,
   type FileUIPart,
   type InferUITool,
   type InferUITools,
@@ -51,3 +52,4 @@ export {
   type CompletionRequestOptions,
   type UseCompletionOptions,
 } from './use-completion';
+export { validateUIMessages } from './validate-ui-messages';

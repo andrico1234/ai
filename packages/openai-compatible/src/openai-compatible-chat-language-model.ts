@@ -235,7 +235,8 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV2 {
     }
 
     // reasoning content:
-    const reasoning = choice.message.reasoning_content;
+    const reasoning =
+      choice.message.reasoning_content ?? choice.message.reasoning;
     if (reasoning != null && reasoning.length > 0) {
       content.push({
         type: 'reasoning',
@@ -463,7 +464,8 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV2 {
             const delta = choice.delta;
 
             // enqueue reasoning before text deltas:
-            if (delta.reasoning_content != null) {
+            const reasoningContent = delta.reasoning_content ?? delta.reasoning;
+            if (reasoningContent) {
               if (!isActiveReasoning) {
                 controller.enqueue({
                   type: 'reasoning-start',
@@ -475,11 +477,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV2 {
               controller.enqueue({
                 type: 'reasoning-delta',
                 id: 'reasoning-0',
-                delta: delta.reasoning_content,
+                delta: reasoningContent,
               });
             }
 
-            if (delta.content != null) {
+            if (delta.content) {
               if (!isActiveText) {
                 controller.enqueue({ type: 'text-start', id: 'txt-0' });
                 isActiveText = true;
@@ -703,6 +705,7 @@ const OpenAICompatibleChatResponseSchema = z.object({
         role: z.literal('assistant').nullish(),
         content: z.string().nullish(),
         reasoning_content: z.string().nullish(),
+        reasoning: z.string().nullish(),
         tool_calls: z
           .array(
             z.object({
@@ -739,7 +742,10 @@ const createOpenAICompatibleChatChunkSchema = <
             .object({
               role: z.enum(['assistant']).nullish(),
               content: z.string().nullish(),
+              // Most openai-compatible models set `reasoning_content`, but some
+              // providers serving `gpt-oss` set `reasoning`. See #7866
               reasoning_content: z.string().nullish(),
+              reasoning: z.string().nullish(),
               tool_calls: z
                 .array(
                   z.object({

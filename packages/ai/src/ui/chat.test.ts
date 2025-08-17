@@ -893,6 +893,36 @@ describe('Chat', () => {
         ]
       `);
     });
+
+    it('should handle error parts', async () => {
+      server.urls['http://localhost:3000/api/chat'].response = {
+        type: 'stream-chunks',
+        chunks: [
+          formatChunk({ type: 'start' }),
+          formatChunk({ type: 'error', errorText: 'test-error' }),
+        ],
+      };
+
+      const errorPromise = createResolvablePromise<void>();
+
+      const chat = new TestChat({
+        id: '123',
+        generateId: mockId(),
+        transport: new DefaultChatTransport({
+          api: 'http://localhost:3000/api/chat',
+        }),
+        onError: () => errorPromise.resolve(),
+      });
+
+      chat.sendMessage({
+        text: 'Hello, world!',
+      });
+
+      await errorPromise.promise;
+
+      expect(chat.error).toMatchInlineSnapshot(`[Error: test-error]`);
+      expect(chat.status).toBe('error');
+    });
   });
 
   describe('sendAutomaticallyWhen', () => {
@@ -979,7 +1009,9 @@ describe('Chat', () => {
                   "testArg": "test-value",
                 },
                 "output": "test-result",
+                "preliminary": undefined,
                 "providerExecuted": undefined,
+                "rawInput": undefined,
                 "state": "output-available",
                 "toolCallId": "tool-call-0",
                 "type": "tool-test-tool",
@@ -1128,7 +1160,9 @@ describe('Chat', () => {
                   "testArg": "test-value",
                 },
                 "output": "test-result",
+                "preliminary": undefined,
                 "providerExecuted": undefined,
+                "rawInput": undefined,
                 "state": "output-available",
                 "toolCallId": "tool-call-0",
                 "type": "tool-test-tool",
@@ -1182,6 +1216,43 @@ describe('Chat', () => {
           "trigger": "submit-message",
         }
       `);
+    });
+  });
+
+  describe('clearError', () => {
+    it('should clear the error and set the status to ready', async () => {
+      server.urls['http://localhost:3000/api/chat'].response = {
+        type: 'stream-chunks',
+        chunks: [
+          formatChunk({ type: 'start' }),
+          formatChunk({ type: 'error', errorText: 'test-error' }),
+        ],
+      };
+
+      const errorPromise = createResolvablePromise<void>();
+
+      const chat = new TestChat({
+        id: '123',
+        generateId: mockId(),
+        transport: new DefaultChatTransport({
+          api: 'http://localhost:3000/api/chat',
+        }),
+        onError: () => errorPromise.resolve(),
+      });
+
+      chat.sendMessage({
+        text: 'Hello, world!',
+      });
+
+      await errorPromise.promise;
+
+      expect(chat.error).toMatchInlineSnapshot(`[Error: test-error]`);
+      expect(chat.status).toBe('error');
+
+      chat.clearError();
+
+      expect(chat.error).toBeUndefined();
+      expect(chat.status).toBe('ready');
     });
   });
 });

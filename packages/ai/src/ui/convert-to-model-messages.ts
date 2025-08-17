@@ -7,6 +7,7 @@ import { ToolSet } from '../generate-text/tool-set';
 import { createToolModelOutput } from '../prompt/create-tool-model-output';
 import { MessageConversionError } from '../prompt/message-conversion-error';
 import {
+  DynamicToolUIPart,
   FileUIPart,
   getToolName,
   isToolUIPart,
@@ -49,11 +50,21 @@ export function convertToModelMessages(
   for (const message of messages) {
     switch (message.role) {
       case 'system': {
+        const textParts = message.parts.filter(part => part.type === 'text');
+
+        const providerMetadata = textParts.reduce((acc, part) => {
+          if (part.providerMetadata != null) {
+            return { ...acc, ...part.providerMetadata };
+          }
+          return acc;
+        }, {});
+
         modelMessages.push({
           role: 'system',
-          content: message.parts
-            .map(part => (part.type === 'text' ? part.text : ''))
-            .join(''),
+          content: textParts.map(part => part.text).join(''),
+          ...(Object.keys(providerMetadata).length > 0
+            ? { providerOptions: providerMetadata }
+            : {}),
         });
         break;
       }
@@ -72,6 +83,9 @@ export function convertToModelMessages(
                   return {
                     type: 'text' as const,
                     text: part.text,
+                    ...(part.providerMetadata != null
+                      ? { providerOptions: part.providerMetadata }
+                      : {}),
                   };
                 case 'file':
                   return {
@@ -79,6 +93,9 @@ export function convertToModelMessages(
                     mediaType: part.mediaType,
                     filename: part.filename,
                     data: part.url,
+                    ...(part.providerMetadata != null
+                      ? { providerOptions: part.providerMetadata }
+                      : {}),
                   };
                 default:
                   return part;
@@ -92,7 +109,11 @@ export function convertToModelMessages(
       case 'assistant': {
         if (message.parts != null) {
           let block: Array<
-            TextUIPart | ToolUIPart<UITools> | ReasoningUIPart | FileUIPart
+            | TextUIPart
+            | ToolUIPart<UITools>
+            | ReasoningUIPart
+            | FileUIPart
+            | DynamicToolUIPart
           > = [];
 
           function processBlock() {
@@ -115,6 +136,7 @@ export function convertToModelMessages(
                 content.push({
                   type: 'file' as const,
                   mediaType: part.mediaType,
+                  filename: part.filename,
                   data: part.url,
                 });
               } else if (part.type === 'reasoning') {
@@ -123,6 +145,25 @@ export function convertToModelMessages(
                   text: part.text,
                   providerOptions: part.providerMetadata,
                 });
+              } else if (part.type === 'dynamic-tool') {
+                const toolName = part.toolName;
+
+                if (part.state === 'input-streaming') {
+                  throw new MessageConversionError({
+                    originalMessage: message,
+                    message: `incomplete tool input is not supported: ${part.toolCallId}`,
+                  });
+                } else {
+                  content.push({
+                    type: 'tool-call' as const,
+                    toolCallId: part.toolCallId,
+                    toolName,
+                    input: part.input,
+                    ...(part.callProviderMetadata != null
+                      ? { providerOptions: part.callProviderMetadata }
+                      : {}),
+                  });
+                }
               } else if (isToolUIPart(part)) {
                 const toolName = getToolName(part);
 
@@ -136,7 +177,10 @@ export function convertToModelMessages(
                     type: 'tool-call' as const,
                     toolCallId: part.toolCallId,
                     toolName,
-                    input: part.input,
+                    input:
+                      part.state === 'output-error'
+                        ? (part.input ?? part.rawInput)
+                        : part.input,
                     providerExecuted: part.providerExecuted,
                     ...(part.callProviderMetadata != null
                       ? { providerOptions: part.callProviderMetadata }
@@ -176,9 +220,11 @@ export function convertToModelMessages(
             });
 
             // check if there are tool invocations with results in the block
-            const toolParts = block
-              .filter(isToolUIPart)
-              .filter(part => part.providerExecuted !== true);
+            const toolParts = block.filter(
+              part =>
+                (isToolUIPart(part) && part.providerExecuted !== true) ||
+                part.type === 'dynamic-tool',
+            ) as (ToolUIPart<UITools> | DynamicToolUIPart)[];
 
             // tool message with tool results
             if (toolParts.length > 0) {
@@ -188,7 +234,10 @@ export function convertToModelMessages(
                   switch (toolPart.state) {
                     case 'output-error':
                     case 'output-available': {
-                      const toolName = getToolName(toolPart);
+                      const toolName =
+                        toolPart.type === 'dynamic-tool'
+                          ? toolPart.toolName
+                          : getToolName(toolPart);
 
                       return {
                         type: 'tool-result',
@@ -226,6 +275,7 @@ export function convertToModelMessages(
               part.type === 'text' ||
               part.type === 'reasoning' ||
               part.type === 'file' ||
+              part.type === 'dynamic-tool' ||
               isToolUIPart(part)
             ) {
               block.push(part);
